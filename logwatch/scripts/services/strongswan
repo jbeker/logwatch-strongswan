@@ -1,0 +1,140 @@
+########################################################
+# This was written and is maintained by:
+#    Jeremy Beker <gothmog@confusticate.com
+#
+# Please send all comments, suggestions, bug reports,
+#    etc, to gothmog@confusticate.com
+########################################################
+
+
+$Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+$Ignore = $ENV{'ignore_services'} || 0;
+$Summarize = $ENV{'summarize_connections'} || 0;
+use Logwatch ':ip';
+%OtherList = ();
+
+sub unitize($ $) {
+  my ($num, $fmt) = @_;
+  my $kilobyte = 2**10;
+  my $megabyte = 2**20;
+  my $gigabyte = 2**30;
+  my $terabyte = 2**40;
+
+  if ($num >= $terabyte) {
+    $num /= $terabyte;
+    $fmt .= '.3fT';
+  } elsif ($num >= $gigabyte) {
+    $num /= $gigabyte;
+    $fmt .= '.3fG';
+  } elsif ($num >= $megabyte) {
+    $num /= $megabyte;
+    $fmt .= '.3fM';
+  } elsif ($num >= $kilobyte) {
+    $num /= $kilobyte;
+    $fmt .= '.3fK';
+  } else {
+    $fmt .= 'd ';
+  }
+
+  return ($num, $fmt);
+}
+
+while (defined($ThisLine = <STDIN>)) {
+  chomp($ThisLine);
+
+  $ThisLine =~ s/^... .. ..:..:.. [^ ]+ //;
+  $ThisLine =~ s/\[ID [0-9]+ [a-z]+\.[a-z]+\] //;
+
+# Limit to charon entries
+
+  if ($ThisLine =~ /^charon.*/ ) {
+    if ($ThisLine =~ /IKE_SA deleted/)
+    {
+#ignore
+    }
+    elsif (($vpn_config,$id) = ($ThisLine =~ /IKE_SA ([^\[]+)\[\d+\] established between (.*)$/))
+    {
+      $IKE_SA->{$vpn_config}->{$id}->{'established'}++;
+    }
+    elsif (($vpn_config,$id) = ($ThisLine =~ /deleting IKE_SA ([^\[]+)\[\d+\] between (.*)$/))
+    {
+      $IKE_SA->{$vpn_config}->{$id}->{'deleted'}++;
+    } 
+    elsif (($host,$type) = ($ThisLine =~ /\[IKE\] (.+) is initiating a[n]? (.+)/))
+    {
+      $IKE_SA_init->{$type}->{$host}++;
+    }
+    elsif ( ($vpn_config,$id) = ($ThisLine =~ /CHILD_SA ([^\{]+)\{\d+\} established with SPIs [\w_]+ [\w_]+ and TS (.*)$/))
+    {
+      $CHILD_SA->{$vpn_config}->{$id}->{'established'}++;
+    }
+    elsif ( ($vpn_config,$in_bytes,$out_bytes,$id) = ($ThisLine =~ /closing CHILD_SA ([^\{]+)\{\d+\} with SPIs [\w_]+ \((\d+) bytes\) [\w_]+ \((\d+) bytes\) and TS (.*)$/))
+    {
+      $CHILD_SA->{$vpn_config}->{$id}->{'deleted'}++;
+      $CHILD_SA->{$vpn_config}->{$id}->{'in_bytes'}+= $in_bytes;
+      $CHILD_SA->{$vpn_config}->{$id}->{'out_bytes'}+= $out_bytes;
+    }
+    else 
+    {
+# Unmatched entries...
+      $ThisLine =~ s/\[\d+\]:/:/;
+      $OtherList{$ThisLine}++;
+    }
+  }
+}
+
+if (keys %{$IKE_SA_init})
+{
+  print "\nIKE_SA Connections Initiated:\n";
+  foreach $ThisOne (sort {$a cmp $b} keys %{$IKE_SA_init}) {
+    print "   ".$ThisOne.":\n";
+    foreach $OtherOne (sort {$a cmp $b} keys %{$IKE_SA_init->{$ThisOne}}) {
+      print "      " . $OtherOne . "    ". $IKE_SA_init->{$ThisOne}->{$OtherOne}. " Time(s)\n";
+    }
+  }
+
+}
+
+
+if (keys %{$IKE_SA}) {
+  print "\nIKE_SA Connections:\n";
+  foreach $ThisOne (sort {$a cmp $b} keys %{$IKE_SA}) {
+    print "   " . $ThisOne . ":\n";
+    foreach $OtherOne (sort {$a cmp $b} keys %{$IKE_SA->{$ThisOne}}) {
+      print "      " . $OtherOne . "\n";
+      print "         Established   " . $IKE_SA->{$ThisOne}->{$OtherOne}->{'established'} . " Time(s)\n";
+      print "         Destroyed     " . $IKE_SA->{$ThisOne}->{$OtherOne}->{'deleted'} . " Time(s)\n";
+      print "\n";
+    }
+  } 
+}
+
+if (keys %{$CHILD_SA}) {
+  print "\nCHILD_SA Connections:\n";
+  foreach $ThisOne (sort {$a cmp $b} keys %{$CHILD_SA}) {
+    print "   " . $ThisOne . ":\n";
+    foreach $OtherOne (sort {$a cmp $b} keys %{$CHILD_SA->{$ThisOne}}) {
+      print "      " . $OtherOne . "\n";
+      print "         Established   " . $CHILD_SA->{$ThisOne}->{$OtherOne}->{'established'} . " Time(s)\n";
+      print "         Destroyed     " . $CHILD_SA->{$ThisOne}->{$OtherOne}->{'deleted'} . " Time(s)\n";
+
+      ($number,$for) = unitize($CHILD_SA->{$ThisOne}->{$OtherOne}->{'in_bytes'},"%8");
+      print "         Data In     " .sprintf($for,$number) . "\n";
+      ($number,$for) = unitize($CHILD_SA->{$ThisOne}->{$OtherOne}->{'out_bytes'},"%8");
+      print "         Data Out    " . sprintf($for,$number). "\n";
+      print "\n";
+    }
+  } 
+}
+
+if (keys %OtherList) {
+  print "\n**Unmatched Entries**\n";
+  foreach $line (sort {$a cmp $b} keys %OtherList) {
+    print "   $line: $OtherList{$line} Time(s)\n";
+  }
+}
+
+
+exit(0);
+
+
