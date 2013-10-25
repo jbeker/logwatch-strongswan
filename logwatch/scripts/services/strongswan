@@ -52,6 +52,10 @@ while (defined($ThisLine = <STDIN>)) {
     {
 #ignore
     }
+    elsif ($ThisLine =~ /\[IKE\] establishing CHILD_SA/)
+    {
+        #ignore
+    }
     elsif (($vpn_config,$id) = ($ThisLine =~ /IKE_SA ([^\[]+)\[\d+\] established between (.*)$/))
     {
       $IKE_SA->{$vpn_config}->{$id}->{'established'}++;
